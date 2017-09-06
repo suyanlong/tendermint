@@ -499,7 +499,9 @@ func (wsc *wsConnection) readRoutine() {
 			wsc.WriteRPCResponse(types.RPCInternalError("unknown", err))
 			go wsc.readRoutine()
 		} else {
-			wsc.baseConn.Close()
+			if err := wsc.baseConn.Close(); err != nil {
+				panic(err)
+			}
 		}
 	}()
 
@@ -513,7 +515,9 @@ func (wsc *wsConnection) readRoutine() {
 			return
 		default:
 			// reset deadline for every type of message (control or data)
-			wsc.baseConn.SetReadDeadline(time.Now().Add(wsc.readWait))
+			if err := wsc.baseConn.SetReadDeadline(time.Now().Add(wsc.readWait)); err != nil {
+				panic(err)
+			}
 			var in []byte
 			_, in, err := wsc.baseConn.ReadMessage()
 			if err != nil {
@@ -585,7 +589,9 @@ func (wsc *wsConnection) writeRoutine() {
 	pingTicker := time.NewTicker(wsc.pingPeriod)
 	defer func() {
 		pingTicker.Stop()
-		wsc.baseConn.Close()
+		if err := wsc.baseConn.Close(); err != nil {
+			panic(err)
+		}
 	}()
 
 	// https://github.com/gorilla/websocket/issues/97
@@ -684,7 +690,10 @@ func (wm *WebsocketManager) WebsocketHandler(w http.ResponseWriter, r *http.Requ
 	con := NewWSConnection(wsConn, wm.funcMap, wm.evsw, wm.wsConnOptions...)
 	con.SetLogger(wm.logger.With("remote", wsConn.RemoteAddr()))
 	wm.logger.Info("New websocket connection", "remote", con.remoteAddr)
-	con.Start() // Blocking
+	_, err = con.Start() // Blocking
+	if err != nil {
+		panic(err)
+	}
 }
 
 // rpc.websocket
@@ -741,5 +750,8 @@ func writeListOfEndpoints(w http.ResponseWriter, r *http.Request, funcMap map[st
 	buf.WriteString("</body></html>")
 	w.Header().Set("Content-Type", "text/html")
 	w.WriteHeader(200)
-	w.Write(buf.Bytes())
+	_, err := w.Write(buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
 }
