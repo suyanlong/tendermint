@@ -255,7 +255,10 @@ func newConsensusStateWithConfig(thisConfig *cfg.Config, state *sm.State, pv typ
 	evsw := types.NewEventSwitch()
 	evsw.SetLogger(log.TestingLogger().With("module", "events"))
 	cs.SetEventSwitch(evsw)
-	evsw.Start()
+	_, err := evsw.Start()
+	if err != nil {
+		panic(err)
+	}
 	return cs
 }
 
