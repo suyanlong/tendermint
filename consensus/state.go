@@ -736,7 +736,7 @@ func (cs *ConsensusState) proposalHeartbeat(height, round int) {
 			ValidatorIndex:   valIndex,
 		}
 		if err := cs.privValidator.SignHeartbeat(chainID, heartbeat); err != nil {
-			panic(err)
+			cs.Logger.Error("Error signing heartbeat", "err", err)
 		}
 		heartbeatEvent := types.EventDataProposalHeartbeat{heartbeat}
 		types.FireEventProposalHeartbeat(cs.evsw, heartbeatEvent)

@@ -151,7 +151,6 @@ func (wal *WAL) SearchForEndHeight(height uint64) (gr *auto.GroupReader, found b
 				}
 			}
 		}
-
 		gr.Close()
 	}
 
