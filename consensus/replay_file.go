@@ -51,11 +51,7 @@ func (cs *ConsensusState) ReplayFile(file string, console bool) error {
 	}
 
 	pb := newPlayback(file, fp, cs, cs.state.Copy())
-	defer func() {
-		if err := pb.fp.Close(); err != nil {
-			return
-		}
-	}()
+	defer pb.fp.Close()
 
 	var nextN int // apply N msgs in a row
 	var msg *TimedWALMessage
@@ -206,7 +202,7 @@ func (pb *playback) replayConsoleLoop() int {
 			newStepCh := subscribeToEvent(pb.cs.evsw, "replay-test", types.EventStringNewRoundStep(), 1)
 			if len(tokens) == 1 {
 				if err := pb.replayReset(1, newStepCh); err != nil {
-					panic(err)
+					pb.cs.Logger.Error("Replay reset error", "err", err)
 				}
 			} else {
 				i, err := strconv.Atoi(tokens[1])
@@ -216,7 +212,7 @@ func (pb *playback) replayConsoleLoop() int {
 					fmt.Printf("argument to back must not be larger than the current count (%d)\n", pb.count)
 				} else {
 					if err := pb.replayReset(i, newStepCh); err != nil {
-						panic(err)
+						pb.cs.Logger.Error("Replay reset error", "err", err)
 					}
 				}
 			}
