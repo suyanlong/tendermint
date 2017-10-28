@@ -7,12 +7,12 @@ import (
 	"hash/crc32"
 	"io"
 	"reflect"
-	"strconv"
-	"strings"
+	//"strconv"
+	//"strings"
 	"time"
 
 	abci "github.com/tendermint/abci/types"
-	auto "github.com/tendermint/tmlibs/autofile"
+	//auto "github.com/tendermint/tmlibs/autofile"
 	cmn "github.com/tendermint/tmlibs/common"
 	"github.com/tendermint/tmlibs/log"
 
@@ -153,6 +153,7 @@ func (cs *ConsensusState) catchupReplay(csHeight int) error {
 
 // Parses marker lines of the form:
 // #ENDHEIGHT: 12345
+/*
 func makeHeightSearchFunc(height int) auto.SearchFunc {
 	return func(line string) (int, error) {
 		line = strings.TrimRight(line, "\n")
@@ -172,7 +173,7 @@ func makeHeightSearchFunc(height int) auto.SearchFunc {
 			return -1, nil
 		}
 	}
-}
+}*/
 
 //----------------------------------------------
 // Recover from failure during block processing
