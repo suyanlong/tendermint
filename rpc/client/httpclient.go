@@ -3,15 +3,15 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"sync"
 
 	"github.com/pkg/errors"
 
-	data "github.com/tendermint/go-wire/data"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	rpcclient "github.com/tendermint/tendermint/rpc/lib/client"
 	"github.com/tendermint/tendermint/types"
-	events "github.com/tendermint/tmlibs/events"
+	cmn "github.com/tendermint/tmlibs/common"
+	tmpubsub "github.com/tendermint/tmlibs/pubsub"
 )
 
 /*
@@ -40,10 +40,9 @@ func NewHTTP(remote, wsEndpoint string) *HTTP {
 }
 
 var (
-	_ Client            = (*HTTP)(nil)
-	_ NetworkClient     = (*HTTP)(nil)
-	_ types.EventSwitch = (*HTTP)(nil)
-	_ types.EventSwitch = (*WSEvents)(nil)
+	_ Client        = (*HTTP)(nil)
+	_ NetworkClient = (*HTTP)(nil)
+	_ EventsClient  = (*HTTP)(nil)
 )
 
 func (c *HTTP) Status() (*ctypes.ResultStatus, error) {
@@ -64,11 +63,11 @@ func (c *HTTP) ABCIInfo() (*ctypes.ResultABCIInfo, error) {
 	return result, nil
 }
 
-func (c *HTTP) ABCIQuery(path string, data data.Bytes) (*ctypes.ResultABCIQuery, error) {
+func (c *HTTP) ABCIQuery(path string, data cmn.HexBytes) (*ctypes.ResultABCIQuery, error) {
 	return c.ABCIQueryWithOptions(path, data, DefaultABCIQueryOptions)
 }
 
-func (c *HTTP) ABCIQueryWithOptions(path string, data data.Bytes, opts ABCIQueryOptions) (*ctypes.ResultABCIQuery, error) {
+func (c *HTTP) ABCIQueryWithOptions(path string, data cmn.HexBytes, opts ABCIQueryOptions) (*ctypes.ResultABCIQuery, error) {
 	result := new(ctypes.ResultABCIQuery)
 	_, err := c.rpc.Call("abci_query",
 		map[string]interface{}{"path": path, "data": data, "height": opts.Height, "trusted": opts.Trusted},
@@ -123,7 +122,16 @@ func (c *HTTP) DumpConsensusState() (*ctypes.ResultDumpConsensusState, error) {
 	return result, nil
 }
 
-func (c *HTTP) BlockchainInfo(minHeight, maxHeight int) (*ctypes.ResultBlockchainInfo, error) {
+func (c *HTTP) Health() (*ctypes.ResultHealth, error) {
+	result := new(ctypes.ResultHealth)
+	_, err := c.rpc.Call("health", map[string]interface{}{}, result)
+	if err != nil {
+		return nil, errors.Wrap(err, "Health")
+	}
+	return result, nil
+}
+
+func (c *HTTP) BlockchainInfo(minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error) {
 	result := new(ctypes.ResultBlockchainInfo)
 	_, err := c.rpc.Call("blockchain",
 		map[string]interface{}{"minHeight": minHeight, "maxHeight": maxHeight},
@@ -143,7 +151,7 @@ func (c *HTTP) Genesis() (*ctypes.ResultGenesis, error) {
 	return result, nil
 }
 
-func (c *HTTP) Block(height *int) (*ctypes.ResultBlock, error) {
+func (c *HTTP) Block(height *int64) (*ctypes.ResultBlock, error) {
 	result := new(ctypes.ResultBlock)
 	_, err := c.rpc.Call("block", map[string]interface{}{"height": height}, result)
 	if err != nil {
@@ -152,7 +160,16 @@ func (c *HTTP) Block(height *int) (*ctypes.ResultBlock, error) {
 	return result, nil
 }
 
-func (c *HTTP) Commit(height *int) (*ctypes.ResultCommit, error) {
+func (c *HTTP) BlockResults(height *int64) (*ctypes.ResultBlockResults, error) {
+	result := new(ctypes.ResultBlockResults)
+	_, err := c.rpc.Call("block_results", map[string]interface{}{"height": height}, result)
+	if err != nil {
+		return nil, errors.Wrap(err, "Block Result")
+	}
+	return result, nil
+}
+
+func (c *HTTP) Commit(height *int64) (*ctypes.ResultCommit, error) {
 	result := new(ctypes.ResultCommit)
 	_, err := c.rpc.Call("commit", map[string]interface{}{"height": height}, result)
 	if err != nil {
@@ -163,18 +180,31 @@ func (c *HTTP) Commit(height *int) (*ctypes.ResultCommit, error) {
 
 func (c *HTTP) Tx(hash []byte, prove bool) (*ctypes.ResultTx, error) {
 	result := new(ctypes.ResultTx)
-	query := map[string]interface{}{
+	params := map[string]interface{}{
 		"hash":  hash,
 		"prove": prove,
 	}
-	_, err := c.rpc.Call("tx", query, result)
+	_, err := c.rpc.Call("tx", params, result)
 	if err != nil {
 		return nil, errors.Wrap(err, "Tx")
 	}
 	return result, nil
 }
 
-func (c *HTTP) Validators(height *int) (*ctypes.ResultValidators, error) {
+func (c *HTTP) TxSearch(query string, prove bool) ([]*ctypes.ResultTx, error) {
+	results := new([]*ctypes.ResultTx)
+	params := map[string]interface{}{
+		"query": query,
+		"prove": prove,
+	}
+	_, err := c.rpc.Call("tx_search", params, results)
+	if err != nil {
+		return nil, errors.Wrap(err, "TxSearch")
+	}
+	return *results, nil
+}
+
+func (c *HTTP) Validators(height *int64) (*ctypes.ResultValidators, error) {
 	result := new(ctypes.ResultValidators)
 	_, err := c.rpc.Call("validators", map[string]interface{}{"height": height}, result)
 	if err != nil {
@@ -186,128 +216,106 @@ func (c *HTTP) Validators(height *int) (*ctypes.ResultValidators, error) {
 /** websocket event stuff here... **/
 
 type WSEvents struct {
-	types.EventSwitch
+	cmn.BaseService
 	remote   string
 	endpoint string
 	ws       *rpcclient.WSClient
 
-	// used for signaling the goroutine that feeds ws -> EventSwitch
-	quit chan bool
-	done chan bool
-
-	// used to maintain counts of actively listened events
-	// so we can properly subscribe/unsubscribe
-	// FIXME: thread-safety???
-	// FIXME: reuse code from tmlibs/events???
-	evtCount  map[string]int      // count how many time each event is subscribed
-	listeners map[string][]string // keep track of which events each listener is listening to
+	mtx           sync.RWMutex
+	subscriptions map[string]chan<- interface{}
 }
 
 func newWSEvents(remote, endpoint string) *WSEvents {
-	return &WSEvents{
-		EventSwitch: types.NewEventSwitch(),
-		endpoint:    endpoint,
-		remote:      remote,
-		quit:        make(chan bool, 1),
-		done:        make(chan bool, 1),
-		evtCount:    map[string]int{},
-		listeners:   map[string][]string{},
+	wsEvents := &WSEvents{
+		endpoint:      endpoint,
+		remote:        remote,
+		subscriptions: make(map[string]chan<- interface{}),
 	}
+
+	wsEvents.BaseService = *cmn.NewBaseService(nil, "WSEvents", wsEvents)
+	return wsEvents
 }
 
-// Start is the only way I could think the extend OnStart from
-// events.eventSwitch.  If only it wasn't private...
-// BaseService.Start -> eventSwitch.OnStart -> WSEvents.Start
-func (w *WSEvents) Start() (bool, error) {
-	st, err := w.EventSwitch.Start()
-	// if we did start, then OnStart here...
-	if st && err == nil {
-		ws := rpcclient.NewWSClient(w.remote, w.endpoint, rpcclient.OnReconnect(func() {
-			w.redoSubscriptions()
-		}))
-		_, err = ws.Start()
-		if err == nil {
-			w.ws = ws
-			go w.eventListener()
-		}
+func (w *WSEvents) OnStart() error {
+	w.ws = rpcclient.NewWSClient(w.remote, w.endpoint, rpcclient.OnReconnect(func() {
+		w.redoSubscriptions()
+	}))
+	err := w.ws.Start()
+	if err != nil {
+		return err
 	}
-	return st, errors.Wrap(err, "StartWSEvent")
+
+	go w.eventListener()
+	return nil
 }
 
 // Stop wraps the BaseService/eventSwitch actions as Start does
-func (w *WSEvents) Stop() bool {
-	stop := w.EventSwitch.Stop()
-	if stop {
-		// send a message to quit to stop the eventListener
-		w.quit <- true
-		<-w.done
-		w.ws.Stop()
-		w.ws = nil
+func (w *WSEvents) OnStop() {
+	err := w.ws.Stop()
+	if err != nil {
+		w.Logger.Error("failed to stop WSClient", "err", err)
 	}
-	return stop
 }
 
-/** TODO: more intelligent subscriptions! **/
-func (w *WSEvents) AddListenerForEvent(listenerID, event string, cb events.EventCallback) {
-	// no one listening -> subscribe
-	if w.evtCount[event] == 0 {
-		w.subscribe(event)
+func (w *WSEvents) Subscribe(ctx context.Context, subscriber string, query tmpubsub.Query, out chan<- interface{}) error {
+	q := query.String()
+
+	err := w.ws.Subscribe(ctx, q)
+	if err != nil {
+		return err
 	}
-	// if this listener was already listening to this event, return early
-	for _, s := range w.listeners[listenerID] {
-		if event == s {
-			return
-		}
-	}
-	// otherwise, add this event to this listener
-	w.evtCount[event] += 1
-	w.listeners[listenerID] = append(w.listeners[listenerID], event)
-	w.EventSwitch.AddListenerForEvent(listenerID, event, cb)
+
+	w.mtx.Lock()
+	// subscriber param is ignored because Tendermint will override it with
+	// remote IP anyway.
+	w.subscriptions[q] = out
+	w.mtx.Unlock()
+
+	return nil
 }
 
-func (w *WSEvents) RemoveListenerForEvent(event string, listenerID string) {
-	// if this listener is listening already, splice it out
-	found := false
-	l := w.listeners[listenerID]
-	for i, s := range l {
-		if event == s {
-			found = true
-			w.listeners[listenerID] = append(l[:i], l[i+1:]...)
-			break
-		}
-	}
-	// if the listener wasn't already listening to the event, exit early
-	if !found {
-		return
+func (w *WSEvents) Unsubscribe(ctx context.Context, subscriber string, query tmpubsub.Query) error {
+	q := query.String()
+
+	err := w.ws.Unsubscribe(ctx, q)
+	if err != nil {
+		return err
 	}
 
-	// now we can update the subscriptions
-	w.evtCount[event] -= 1
-	if w.evtCount[event] == 0 {
-		w.unsubscribe(event)
+	w.mtx.Lock()
+	ch, ok := w.subscriptions[q]
+	if ok {
+		close(ch)
+		delete(w.subscriptions, q)
 	}
-	w.EventSwitch.RemoveListenerForEvent(event, listenerID)
+	w.mtx.Unlock()
+
+	return nil
 }
 
-func (w *WSEvents) RemoveListener(listenerID string) {
-	// remove all counts for this listener
-	for _, s := range w.listeners[listenerID] {
-		w.evtCount[s] -= 1
-		if w.evtCount[s] == 0 {
-			w.unsubscribe(s)
-		}
+func (w *WSEvents) UnsubscribeAll(ctx context.Context, subscriber string) error {
+	err := w.ws.UnsubscribeAll(ctx)
+	if err != nil {
+		return err
 	}
-	w.listeners[listenerID] = nil
 
-	// then let the switch do it's magic
-	w.EventSwitch.RemoveListener(listenerID)
+	w.mtx.Lock()
+	for _, ch := range w.subscriptions {
+		close(ch)
+	}
+	w.subscriptions = make(map[string]chan<- interface{})
+	w.mtx.Unlock()
+
+	return nil
 }
 
-// After being reconnected, it is necessary to redo subscription
-// to server otherwise no data will be automatically received
+// After being reconnected, it is necessary to redo subscription to server
+// otherwise no data will be automatically received.
 func (w *WSEvents) redoSubscriptions() {
-	for event, _ := range w.evtCount {
-		w.subscribe(event)
+	for q := range w.subscriptions {
+		// NOTE: no timeout for resubscribing
+		// FIXME: better logging/handling of errors??
+		w.ws.Subscribe(context.Background(), q)
 	}
 }
 
@@ -318,55 +326,29 @@ func (w *WSEvents) redoSubscriptions() {
 func (w *WSEvents) eventListener() {
 	for {
 		select {
-		case resp := <-w.ws.ResponsesCh:
-			// res is json.RawMessage
+		case resp, ok := <-w.ws.ResponsesCh:
+			if !ok {
+				return
+			}
 			if resp.Error != nil {
-				// FIXME: better logging/handling of errors??
-				fmt.Printf("ws err: %+v\n", resp.Error.Error())
+				w.Logger.Error("WS error", "err", resp.Error.Error())
 				continue
 			}
-			err := w.parseEvent(*resp.Result)
+			result := new(ctypes.ResultEvent)
+			err := json.Unmarshal(resp.Result, result)
 			if err != nil {
-				// FIXME: better logging/handling of errors??
-				fmt.Printf("ws result: %+v\n", err)
+				w.Logger.Error("failed to unmarshal response", "err", err)
+				continue
 			}
-		case <-w.quit:
-			// send a message so we can wait for the routine to exit
-			// before cleaning up the w.ws stuff
-			w.done <- true
+			// NOTE: writing also happens inside mutex so we can't close a channel in
+			// Unsubscribe/UnsubscribeAll.
+			w.mtx.RLock()
+			if ch, ok := w.subscriptions[result.Query]; ok {
+				ch <- result.Data
+			}
+			w.mtx.RUnlock()
+		case <-w.Quit():
 			return
 		}
-	}
-}
-
-// parseEvent unmarshals the json message and converts it into
-// some implementation of types.TMEventData, and sends it off
-// on the merry way to the EventSwitch
-func (w *WSEvents) parseEvent(data []byte) (err error) {
-	result := new(ctypes.ResultEvent)
-	err = json.Unmarshal(data, result)
-	if err != nil {
-		// ignore silently (eg. subscribe, unsubscribe and maybe other events)
-		// TODO: ?
-		return nil
-	}
-	// looks good!  let's fire this baby!
-	w.EventSwitch.FireEvent(result.Name, result.Data)
-	return nil
-}
-
-// no way of exposing these failures, so we panic.
-// is this right?  or silently ignore???
-func (w *WSEvents) subscribe(event string) {
-	err := w.ws.Subscribe(context.TODO(), event)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func (w *WSEvents) unsubscribe(event string) {
-	err := w.ws.Unsubscribe(context.TODO(), event)
-	if err != nil {
-		panic(err)
 	}
 }

@@ -28,7 +28,6 @@ type MempoolReactor struct {
 	p2p.BaseReactor
 	config  *cfg.MempoolConfig
 	Mempool *Mempool
-	evsw    types.EventSwitch
 }
 
 // NewMempoolReactor returns a new MempoolReactor with the given config and mempool.
@@ -51,7 +50,7 @@ func (memR *MempoolReactor) SetLogger(l log.Logger) {
 // It returns the list of channels for this reactor.
 func (memR *MempoolReactor) GetChannels() []*p2p.ChannelDescriptor {
 	return []*p2p.ChannelDescriptor{
-		&p2p.ChannelDescriptor{
+		{
 			ID:       MempoolChannel,
 			Priority: 5,
 		},
@@ -74,7 +73,8 @@ func (memR *MempoolReactor) RemovePeer(peer p2p.Peer, reason interface{}) {
 func (memR *MempoolReactor) Receive(chID byte, src p2p.Peer, msgBytes []byte) {
 	_, msg, err := DecodeMessage(msgBytes)
 	if err != nil {
-		memR.Logger.Error("Error decoding message", "err", err)
+		memR.Logger.Error("Error decoding message", "src", src, "chId", chID, "msg", msg, "err", err, "bytes", msgBytes)
+		memR.Switch.StopPeerForError(src, err)
 		return
 	}
 	memR.Logger.Debug("Receive", "src", src, "chId", chID, "msg", msg)
@@ -98,35 +98,33 @@ func (memR *MempoolReactor) BroadcastTx(tx types.Tx, cb func(*abci.Response)) er
 
 // PeerState describes the state of a peer.
 type PeerState interface {
-	GetHeight() int
-}
-
-// Peer describes a peer.
-type Peer interface {
-	IsRunning() bool
-	Send(byte, interface{}) bool
-	Get(string) interface{}
+	GetHeight() int64
 }
 
 // Send new mempool txs to peer.
-// TODO: Handle mempool or reactor shutdown?
-// As is this routine may block forever if no new txs come in.
-func (memR *MempoolReactor) broadcastTxRoutine(peer Peer) {
+func (memR *MempoolReactor) broadcastTxRoutine(peer p2p.Peer) {
 	if !memR.config.Broadcast {
 		return
 	}
 
 	var next *clist.CElement
 	for {
-		if !memR.IsRunning() || !peer.IsRunning() {
-			return // Quit!
-		}
+		// This happens because the CElement we were looking at got garbage
+		// collected (removed). That is, .NextWait() returned nil. Go ahead and
+		// start from the beginning.
 		if next == nil {
-			// This happens because the CElement we were looking at got
-			// garbage collected (removed).  That is, .NextWait() returned nil.
-			// Go ahead and start from the beginning.
-			next = memR.Mempool.TxsFrontWait() // Wait until a tx is available
+			select {
+			case <-memR.Mempool.TxsWaitChan(): // Wait until a tx is available
+				if next = memR.Mempool.TxsFront(); next == nil {
+					continue
+				}
+			case <-peer.Quit():
+				return
+			case <-memR.Quit():
+				return
+			}
 		}
+
 		memTx := next.Value.(*mempoolTx)
 		// make sure the peer is up to date
 		height := memTx.Height()
@@ -145,14 +143,16 @@ func (memR *MempoolReactor) broadcastTxRoutine(peer Peer) {
 			continue
 		}
 
-		next = next.NextWait()
-		continue
+		select {
+		case <-next.NextWaitChan():
+			// see the start of the for loop for nil check
+			next = next.Next()
+		case <-peer.Quit():
+			return
+		case <-memR.Quit():
+			return
+		}
 	}
-}
-
-// SetEventSwitch implements events.Eventable.
-func (memR *MempoolReactor) SetEventSwitch(evsw types.EventSwitch) {
-	memR.evsw = evsw
 }
 
 //-----------------------------------------------------------------------------

@@ -13,49 +13,66 @@ func TestNewNetAddress(t *testing.T) {
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8080")
 	require.Nil(err)
-	addr := NewNetAddress(tcpAddr)
+	addr := NewNetAddress("", tcpAddr)
 
 	assert.Equal("127.0.0.1:8080", addr.String())
 
 	assert.NotPanics(func() {
-		NewNetAddress(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8000})
+		NewNetAddress("", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8000})
 	}, "Calling NewNetAddress with UDPAddr should not panic in testing")
 }
 
 func TestNewNetAddressString(t *testing.T) {
-	assert := assert.New(t)
-
-	tests := []struct {
-		addr    string
-		correct bool
+	testCases := []struct {
+		addr     string
+		expected string
+		correct  bool
 	}{
-		{"127.0.0.1:8080", true},
+		{"127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"tcp://127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"udp://127.0.0.1:8080", "127.0.0.1:8080", true},
+		{"udp//127.0.0.1:8080", "", false},
 		// {"127.0.0:8080", false},
-		{"notahost", false},
-		{"127.0.0.1:notapath", false},
-		{"notahost:8080", false},
-		{"8082", false},
-		{"127.0.0:8080000", false},
+		{"notahost", "", false},
+		{"127.0.0.1:notapath", "", false},
+		{"notahost:8080", "", false},
+		{"8082", "", false},
+		{"127.0.0:8080000", "", false},
+
+		{"deadbeef@127.0.0.1:8080", "", false},
+		{"this-isnot-hex@127.0.0.1:8080", "", false},
+		{"xxxxbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", "", false},
+		{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", true},
+
+		{"tcp://deadbeef@127.0.0.1:8080", "", false},
+		{"tcp://this-isnot-hex@127.0.0.1:8080", "", false},
+		{"tcp://xxxxbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", "", false},
+		{"tcp://deadbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef@127.0.0.1:8080", true},
+
+		{"tcp://@127.0.0.1:8080", "", false},
+		{"tcp://@", "", false},
+		{"", "", false},
+		{"@", "", false},
+		{" @", "", false},
+		{" @ ", "", false},
 	}
 
-	for _, t := range tests {
-		addr, err := NewNetAddressString(t.addr)
-		if t.correct {
-			if assert.Nil(err, t.addr) {
-				assert.Equal(t.addr, addr.String())
+	for _, tc := range testCases {
+		addr, err := NewNetAddressString(tc.addr)
+		if tc.correct {
+			if assert.Nil(t, err, tc.addr) {
+				assert.Equal(t, tc.expected, addr.String())
 			}
 		} else {
-			assert.NotNil(err, t.addr)
+			assert.NotNil(t, err, tc.addr)
 		}
 	}
 }
 
 func TestNewNetAddressStrings(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	addrs, err := NewNetAddressStrings([]string{"127.0.0.1:8080", "127.0.0.2:8080"})
-	require.Nil(err)
-
-	assert.Equal(2, len(addrs))
+	addrs, errs := NewNetAddressStrings([]string{"127.0.0.1:8080", "127.0.0.2:8080"})
+	assert.Len(t, errs, 0)
+	assert.Equal(t, 2, len(addrs))
 }
 
 func TestNewNetAddressIPPort(t *testing.T) {

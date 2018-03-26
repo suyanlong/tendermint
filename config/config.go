@@ -2,8 +2,34 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
+)
+
+// NOTE: Most of the structs & relevant comments + the
+// default configuration options were used to manually
+// generate the config.toml. Please reflect any changes
+// made here in the defaultConfigTemplate constant in
+// config/toml.go
+// NOTE: tmlibs/cli must know to look in the config dir!
+var (
+	DefaultTendermintDir = ".tendermint"
+	defaultConfigDir     = "config"
+	defaultDataDir       = "data"
+
+	defaultConfigFileName  = "config.toml"
+	defaultGenesisJSONName = "genesis.json"
+
+	defaultPrivValName  = "priv_validator.json"
+	defaultNodeKeyName  = "node_key.json"
+	defaultAddrBookName = "addrbook.json"
+
+	defaultConfigFilePath  = filepath.Join(defaultConfigDir, defaultConfigFileName)
+	defaultGenesisJSONPath = filepath.Join(defaultConfigDir, defaultGenesisJSONName)
+	defaultPrivValPath     = filepath.Join(defaultConfigDir, defaultPrivValName)
+	defaultNodeKeyPath     = filepath.Join(defaultConfigDir, defaultNodeKeyName)
+	defaultAddrBookPath    = filepath.Join(defaultConfigDir, defaultAddrBookName)
 )
 
 // Config defines the top level configuration for a Tendermint node
@@ -16,6 +42,7 @@ type Config struct {
 	P2P       *P2PConfig       `mapstructure:"p2p"`
 	Mempool   *MempoolConfig   `mapstructure:"mempool"`
 	Consensus *ConsensusConfig `mapstructure:"consensus"`
+	TxIndex   *TxIndexConfig   `mapstructure:"tx_index"`
 }
 
 // DefaultConfig returns a default configuration for a Tendermint node
@@ -26,6 +53,7 @@ func DefaultConfig() *Config {
 		P2P:        DefaultP2PConfig(),
 		Mempool:    DefaultMempoolConfig(),
 		Consensus:  DefaultConsensusConfig(),
+		TxIndex:    DefaultTxIndexConfig(),
 	}
 }
 
@@ -35,8 +63,9 @@ func TestConfig() *Config {
 		BaseConfig: TestBaseConfig(),
 		RPC:        TestRPCConfig(),
 		P2P:        TestP2PConfig(),
-		Mempool:    DefaultMempoolConfig(),
+		Mempool:    TestMempoolConfig(),
 		Consensus:  TestConsensusConfig(),
+		TxIndex:    TestTxIndexConfig(),
 	}
 }
 
@@ -55,21 +84,29 @@ func (cfg *Config) SetRoot(root string) *Config {
 
 // BaseConfig defines the base configuration for a Tendermint node
 type BaseConfig struct {
+
+	// chainID is unexposed and immutable but here for convenience
+	chainID string
+
 	// The root directory for all data.
 	// This should be set in viper so it can unmarshal into this struct
 	RootDir string `mapstructure:"home"`
 
-	// The ID of the chain to join (should be signed with every transaction and vote)
-	ChainID string `mapstructure:"chain_id"`
-
-	// A JSON file containing the initial validator set and other meta data
+	// Path to the JSON file containing the initial validator set and other meta data
 	Genesis string `mapstructure:"genesis_file"`
 
-	// A JSON file containing the private key to use as a validator in the consensus protocol
+	// Path to the JSON file containing the private key to use as a validator in the consensus protocol
 	PrivValidator string `mapstructure:"priv_validator_file"`
+
+	// A JSON file containing the private key to use for p2p authenticated encryption
+	NodeKey string `mapstructure:"node_key_file"`
 
 	// A custom human readable name for this node
 	Moniker string `mapstructure:"moniker"`
+
+	// TCP or UNIX socket address for Tendermint to listen on for
+	// connections from an external PrivValidator process
+	PrivValidatorListenAddr string `mapstructure:"priv_validator_laddr"`
 
 	// TCP or UNIX socket address of the ABCI application,
 	// or the name of an ABCI application compiled in with the Tendermint binary
@@ -93,9 +130,6 @@ type BaseConfig struct {
 	// so the app can decide if we should keep the connection or not
 	FilterPeers bool `mapstructure:"filter_peers"` // false
 
-	// What indexer to use for transactions
-	TxIndex string `mapstructure:"tx_index"`
-
 	// Database backend: leveldb | memdb
 	DBBackend string `mapstructure:"db_backend"`
 
@@ -103,19 +137,23 @@ type BaseConfig struct {
 	DBPath string `mapstructure:"db_dir"`
 }
 
+func (c BaseConfig) ChainID() string {
+	return c.chainID
+}
+
 // DefaultBaseConfig returns a default base configuration for a Tendermint node
 func DefaultBaseConfig() BaseConfig {
 	return BaseConfig{
-		Genesis:           "genesis.json",
-		PrivValidator:     "priv_validator.json",
-		Moniker:           "anonymous",
+		Genesis:           defaultGenesisJSONPath,
+		PrivValidator:     defaultPrivValPath,
+		NodeKey:           defaultNodeKeyPath,
+		Moniker:           defaultMoniker,
 		ProxyApp:          "tcp://127.0.0.1:46658",
 		ABCI:              "socket",
 		LogLevel:          DefaultPackageLogLevels(),
 		ProfListenAddress: "",
 		FastSync:          true,
 		FilterPeers:       false,
-		TxIndex:           "kv",
 		DBBackend:         "leveldb",
 		DBPath:            "data",
 	}
@@ -124,8 +162,8 @@ func DefaultBaseConfig() BaseConfig {
 // TestBaseConfig returns a base configuration for testing a Tendermint node
 func TestBaseConfig() BaseConfig {
 	conf := DefaultBaseConfig()
-	conf.ChainID = "tendermint_test"
-	conf.ProxyApp = "dummy"
+	conf.chainID = "tendermint_test"
+	conf.ProxyApp = "kvstore"
 	conf.FastSync = false
 	conf.DBBackend = "memdb"
 	return conf
@@ -141,6 +179,11 @@ func (b BaseConfig) PrivValidatorFile() string {
 	return rootify(b.PrivValidator, b.RootDir)
 }
 
+// NodeKeyFile returns the full path to the node_key.json file
+func (b BaseConfig) NodeKeyFile() string {
+	return rootify(b.NodeKey, b.RootDir)
+}
+
 // DBDir returns the full path to the database directory
 func (b BaseConfig) DBDir() string {
 	return rootify(b.DBPath, b.RootDir)
@@ -151,9 +194,10 @@ func DefaultLogLevel() string {
 	return "error"
 }
 
-// DefaultPackageLogLevels returns a default log level setting so all packages log at "error", while the `state` package logs at "info"
+// DefaultPackageLogLevels returns a default log level setting so all packages
+// log at "error", while the `state` and `main` packages log at "info"
 func DefaultPackageLogLevels() string {
-	return fmt.Sprintf("state:info,*:%s", DefaultLogLevel())
+	return fmt.Sprintf("main:info,state:info,*:%s", DefaultLogLevel())
 }
 
 //-----------------------------------------------------------------------------
@@ -170,7 +214,7 @@ type RPCConfig struct {
 	// NOTE: This server only supports /broadcast_tx_commit
 	GRPCListenAddress string `mapstructure:"grpc_laddr"`
 
-	// Activate unsafe RPC commands like /dial_seeds and /unsafe_flush_mempool
+	// Activate unsafe RPC commands like /dial_persistent_peers and /unsafe_flush_mempool
 	Unsafe bool `mapstructure:"unsafe"`
 }
 
@@ -203,7 +247,12 @@ type P2PConfig struct {
 	ListenAddress string `mapstructure:"laddr"`
 
 	// Comma separated list of seed nodes to connect to
+	// We only use these if we can’t connect to peers in the addrbook
 	Seeds string `mapstructure:"seeds"`
+
+	// Comma separated list of nodes to keep persistent connections to
+	// Do not add private peers to this list if you don't want them advertised
+	PersistentPeers string `mapstructure:"persistent_peers"`
 
 	// Skip UPNP port forwarding
 	SkipUPNP bool `mapstructure:"skip_upnp"`
@@ -213,9 +262,6 @@ type P2PConfig struct {
 
 	// Set true for strict address routability rules
 	AddrBookStrict bool `mapstructure:"addr_book_strict"`
-
-	// Set true to enable the peer-exchange reactor
-	PexReactor bool `mapstructure:"pex"`
 
 	// Maximum number of peers to connect to
 	MaxNumPeers int `mapstructure:"max_num_peers"`
@@ -231,19 +277,37 @@ type P2PConfig struct {
 
 	// Rate at which packets can be received, in bytes/second
 	RecvRate int64 `mapstructure:"recv_rate"`
+
+	// Set true to enable the peer-exchange reactor
+	PexReactor bool `mapstructure:"pex"`
+
+	// Seed mode, in which node constantly crawls the network and looks for
+	// peers. If another node asks it for addresses, it responds and disconnects.
+	//
+	// Does not work if the peer-exchange reactor is disabled.
+	SeedMode bool `mapstructure:"seed_mode"`
+
+	// Authenticated encryption
+	AuthEnc bool `mapstructure:"auth_enc"`
+
+	// Comma separated list of peer IDs to keep private (will not be gossiped to other peers)
+	PrivatePeerIDs string `mapstructure:"private_peer_ids"`
 }
 
 // DefaultP2PConfig returns a default configuration for the peer-to-peer layer
 func DefaultP2PConfig() *P2PConfig {
 	return &P2PConfig{
 		ListenAddress:           "tcp://0.0.0.0:46656",
-		AddrBook:                "addrbook.json",
+		AddrBook:                defaultAddrBookPath,
 		AddrBookStrict:          true,
 		MaxNumPeers:             50,
 		FlushThrottleTimeout:    100,
 		MaxMsgPacketPayloadSize: 1024,   // 1 kB
 		SendRate:                512000, // 500 kB/s
 		RecvRate:                512000, // 500 kB/s
+		PexReactor:              true,
+		SeedMode:                false,
+		AuthEnc:                 true,
 	}
 }
 
@@ -252,10 +316,11 @@ func TestP2PConfig() *P2PConfig {
 	conf := DefaultP2PConfig()
 	conf.ListenAddress = "tcp://0.0.0.0:36656"
 	conf.SkipUPNP = true
+	conf.FlushThrottleTimeout = 10
 	return conf
 }
 
-// AddrBookFile returns the full path to the address bool
+// AddrBookFile returns the full path to the address book
 func (p *P2PConfig) AddrBookFile() string {
 	return rootify(p.AddrBook, p.RootDir)
 }
@@ -270,6 +335,7 @@ type MempoolConfig struct {
 	RecheckEmpty bool   `mapstructure:"recheck_empty"`
 	Broadcast    bool   `mapstructure:"broadcast"`
 	WalPath      string `mapstructure:"wal_dir"`
+	CacheSize    int    `mapstructure:"cache_size"`
 }
 
 // DefaultMempoolConfig returns a default configuration for the Tendermint mempool
@@ -278,8 +344,16 @@ func DefaultMempoolConfig() *MempoolConfig {
 		Recheck:      true,
 		RecheckEmpty: true,
 		Broadcast:    true,
-		WalPath:      "data/mempool.wal",
+		WalPath:      filepath.Join(defaultDataDir, "mempool.wal"),
+		CacheSize:    100000,
 	}
+}
+
+// TestMempoolConfig returns a configuration for testing the Tendermint mempool
+func TestMempoolConfig() *MempoolConfig {
+	config := DefaultMempoolConfig()
+	config.CacheSize = 1000
+	return config
 }
 
 // WalDir returns the full path to the mempool's write-ahead log
@@ -298,7 +372,7 @@ type ConsensusConfig struct {
 	WalLight bool   `mapstructure:"wal_light"`
 	walFile  string // overrides WalPath if set
 
-	// All timeouts are in ms
+	// All timeouts are in milliseconds
 	TimeoutPropose        int `mapstructure:"timeout_propose"`
 	TimeoutProposeDelta   int `mapstructure:"timeout_propose_delta"`
 	TimeoutPrevote        int `mapstructure:"timeout_prevote"`
@@ -318,7 +392,7 @@ type ConsensusConfig struct {
 	CreateEmptyBlocks         bool `mapstructure:"create_empty_blocks"`
 	CreateEmptyBlocksInterval int  `mapstructure:"create_empty_blocks_interval"`
 
-	// Reactor sleep duration parameters are in ms
+	// Reactor sleep duration parameters are in milliseconds
 	PeerGossipSleepDuration     int `mapstructure:"peer_gossip_sleep_duration"`
 	PeerQueryMaj23SleepDuration int `mapstructure:"peer_query_maj23_sleep_duration"`
 }
@@ -366,7 +440,7 @@ func (cfg *ConsensusConfig) PeerQueryMaj23Sleep() time.Duration {
 // DefaultConsensusConfig returns a default configuration for the consensus service
 func DefaultConsensusConfig() *ConsensusConfig {
 	return &ConsensusConfig{
-		WalPath:                     "data/cs.wal/wal",
+		WalPath:                     filepath.Join(defaultDataDir, "cs.wal", "wal"),
 		WalLight:                    false,
 		TimeoutPropose:              3000,
 		TimeoutProposeDelta:         500,
@@ -388,7 +462,7 @@ func DefaultConsensusConfig() *ConsensusConfig {
 // TestConsensusConfig returns a configuration for testing the consensus service
 func TestConsensusConfig() *ConsensusConfig {
 	config := DefaultConsensusConfig()
-	config.TimeoutPropose = 2000
+	config.TimeoutPropose = 100
 	config.TimeoutProposeDelta = 1
 	config.TimeoutPrevote = 10
 	config.TimeoutPrevoteDelta = 1
@@ -396,6 +470,8 @@ func TestConsensusConfig() *ConsensusConfig {
 	config.TimeoutPrecommitDelta = 1
 	config.TimeoutCommit = 10
 	config.SkipTimeoutCommit = true
+	config.PeerGossipSleepDuration = 5
+	config.PeerQueryMaj23SleepDuration = 250
 	return config
 }
 
@@ -413,6 +489,46 @@ func (c *ConsensusConfig) SetWalFile(walFile string) {
 }
 
 //-----------------------------------------------------------------------------
+// TxIndexConfig
+
+// TxIndexConfig defines the confuguration for the transaction
+// indexer, including tags to index.
+type TxIndexConfig struct {
+	// What indexer to use for transactions
+	//
+	// Options:
+	//   1) "null" (default)
+	//   2) "kv" - the simplest possible indexer, backed by key-value storage (defaults to levelDB; see DBBackend).
+	Indexer string `mapstructure:"indexer"`
+
+	// Comma-separated list of tags to index (by default the only tag is tx hash)
+	//
+	// It's recommended to index only a subset of tags due to possible memory
+	// bloat. This is, of course, depends on the indexer's DB and the volume of
+	// transactions.
+	IndexTags string `mapstructure:"index_tags"`
+
+	// When set to true, tells indexer to index all tags. Note this may be not
+	// desirable (see the comment above). IndexTags has a precedence over
+	// IndexAllTags (i.e. when given both, IndexTags will be indexed).
+	IndexAllTags bool `mapstructure:"index_all_tags"`
+}
+
+// DefaultTxIndexConfig returns a default configuration for the transaction indexer.
+func DefaultTxIndexConfig() *TxIndexConfig {
+	return &TxIndexConfig{
+		Indexer:      "kv",
+		IndexTags:    "",
+		IndexAllTags: false,
+	}
+}
+
+// TestTxIndexConfig returns a default configuration for the transaction indexer.
+func TestTxIndexConfig() *TxIndexConfig {
+	return DefaultTxIndexConfig()
+}
+
+//-----------------------------------------------------------------------------
 // Utils
 
 // helper function to make config creation independent of root dir
@@ -421,4 +537,19 @@ func rootify(path, root string) string {
 		return path
 	}
 	return filepath.Join(root, path)
+}
+
+//-----------------------------------------------------------------------------
+// Moniker
+
+var defaultMoniker = getDefaultMoniker()
+
+// getDefaultMoniker returns a default moniker, which is the host name. If runtime
+// fails to get the host name, "anonymous" will be returned.
+func getDefaultMoniker() string {
+	moniker, err := os.Hostname()
+	if err != nil {
+		moniker = "anonymous"
+	}
+	return moniker
 }

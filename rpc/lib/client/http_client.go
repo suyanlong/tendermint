@@ -42,7 +42,7 @@ func makeHTTPDialer(remoteAddr string) (string, func(string, string) (net.Conn, 
 		protocol = "tcp"
 	}
 
-	// replace / with . for http requests (dummy domain)
+	// replace / with . for http requests (kvstore domain)
 	trimmedAddress := strings.Replace(address, "/", ".", -1)
 	return trimmedAddress, func(proto, addr string) (net.Conn, error) {
 		return net.Dial(protocol, address)
@@ -93,7 +93,8 @@ func (c *JSONRPCClient) Call(method string, params map[string]interface{}, resul
 	if err != nil {
 		return nil, err
 	}
-	defer httpResponse.Body.Close()
+	defer httpResponse.Body.Close() // nolint: errcheck
+
 	responseBytes, err := ioutil.ReadAll(httpResponse.Body)
 	if err != nil {
 		return nil, err
@@ -128,7 +129,8 @@ func (c *URIClient) Call(method string, params map[string]interface{}, result in
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() // nolint: errcheck
+
 	responseBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -153,7 +155,7 @@ func unmarshalResponseBytes(responseBytes []byte, result interface{}) (interface
 		return nil, errors.Errorf("Response error: %v", response.Error)
 	}
 	// unmarshal the RawMessage into the result
-	err = json.Unmarshal(*response.Result, result)
+	err = json.Unmarshal(response.Result, result)
 	if err != nil {
 		return nil, errors.Errorf("Error unmarshalling rpc response result: %v", err)
 	}
@@ -185,7 +187,6 @@ func argsToJson(args map[string]interface{}) error {
 			continue
 		}
 
-		// Pass everything else to go-wire
 		data, err := json.Marshal(v)
 		if err != nil {
 			return err

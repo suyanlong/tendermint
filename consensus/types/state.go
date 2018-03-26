@@ -55,8 +55,10 @@ func (rs RoundStepType) String() string {
 // It is Immutable when returned from ConsensusState.GetRoundState()
 // TODO: Actually, only the top pointer is copied,
 // so access to field pointers is still racey
+// NOTE: Not thread safe. Should only be manipulated by functions downstream
+// of the cs.receiveRoutine
 type RoundState struct {
-	Height             int // Height we are working on
+	Height             int64 // Height we are working on
 	Round              int
 	Step               RoundStepType
 	StartTime          time.Time
@@ -68,6 +70,9 @@ type RoundState struct {
 	LockedRound        int
 	LockedBlock        *types.Block
 	LockedBlockParts   *types.PartSet
+	ValidRound         int
+	ValidBlock         *types.Block
+	ValidBlockParts    *types.PartSet
 	Votes              *HeightVoteSet
 	CommitRound        int            //
 	LastCommit         *types.VoteSet // Last precommits at Height-1
@@ -76,11 +81,14 @@ type RoundState struct {
 
 // RoundStateEvent returns the H/R/S of the RoundState as an event.
 func (rs *RoundState) RoundStateEvent() types.EventDataRoundState {
+	// XXX: copy the RoundState
+	// if we want to avoid this, we may need synchronous events after all
+	rs_ := *rs
 	edrs := types.EventDataRoundState{
 		Height:     rs.Height,
 		Round:      rs.Round,
 		Step:       rs.Step.String(),
-		RoundState: rs,
+		RoundState: &rs_,
 	}
 	return edrs
 }
@@ -101,9 +109,11 @@ func (rs *RoundState) StringIndented(indent string) string {
 %s  ProposalBlock: %v %v
 %s  LockedRound:   %v
 %s  LockedBlock:   %v %v
+%s  ValidRound:   %v
+%s  ValidBlock:   %v %v
 %s  Votes:         %v
-%s  LastCommit: %v
-%s  LastValidators:    %v
+%s  LastCommit:    %v
+%s  LastValidators:%v
 %s}`,
 		indent, rs.Height, rs.Round, rs.Step,
 		indent, rs.StartTime,
@@ -113,6 +123,8 @@ func (rs *RoundState) StringIndented(indent string) string {
 		indent, rs.ProposalBlockParts.StringShort(), rs.ProposalBlock.StringShort(),
 		indent, rs.LockedRound,
 		indent, rs.LockedBlockParts.StringShort(), rs.LockedBlock.StringShort(),
+		indent, rs.ValidRound,
+		indent, rs.ValidBlockParts.StringShort(), rs.ValidBlock.StringShort(),
 		indent, rs.Votes.StringIndented(indent+"    "),
 		indent, rs.LastCommit.StringShort(),
 		indent, rs.LastValidators.StringIndented(indent+"    "),

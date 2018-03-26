@@ -1,20 +1,20 @@
 package core_grpc_test
 
 import (
+	"context"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/net/context"
 
-	"github.com/tendermint/abci/example/dummy"
+	"github.com/tendermint/abci/example/kvstore"
 	"github.com/tendermint/tendermint/rpc/grpc"
 	"github.com/tendermint/tendermint/rpc/test"
 )
 
 func TestMain(m *testing.M) {
 	// start a tendermint node in the background to test against
-	app := dummy.NewDummyApplication()
+	app := kvstore.NewKVStoreApplication()
 	node := rpctest.StartTendermint(app)
 	code := m.Run()
 

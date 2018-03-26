@@ -3,9 +3,7 @@
 ## Roadmap
 
 BREAKING CHANGES:
-- Upgrade the header to support better proofs on validtors, results, evidence, and possibly more
 - Better support for injecting randomness
-- Pass evidence/voteInfo through ABCI
 - Upgrade consensus for more real-time use of evidence
 
 FEATURES:
@@ -26,6 +24,139 @@ IMPROVEMENTS:
 BUG FIXES:
 - Graceful handling/recovery for apps that have non-determinism or fail to halt
 - Graceful handling/recovery for violations of safety, or liveness
+
+## 0.17.0 (TBD)
+
+BREAKING:
+- [genesis] rename `app_options` to `app_state`
+
+IMPROVEMENTS:
+- [config] exposed `auth_enc` flag to enable/disable encryption
+- [p2p] when `auth_enc` is true, all dialed peers must have a node ID in their address
+- [all] renamed `dummy` (`persistent_dummy`) to `kvstore`
+  (`persistent_kvstore`) (name "dummy" is deprecated and will not work in
+  release after this one)
+
+FEATURES:
+- [config] added the `--p2p.private_peer_ids` flag and `PrivatePeerIDs` config variable (see config for description)
+- [rpc] added `/health` endpoint, which returns empty result for now
+
+## 0.16.0 (February 20th, 2017)
+
+BREAKING CHANGES:
+- [config] use $TMHOME/config for all config and json files
+- [p2p] old `--p2p.seeds` is now `--p2p.persistent_peers` (persistent peers to which TM will always connect to)
+- [p2p] now `--p2p.seeds` only used for getting addresses (if addrbook is empty; not persistent)
+- [p2p] NodeInfo: remove RemoteAddr and add Channels
+    - we must have at least one overlapping channel with peer
+    - we only send msgs for channels the peer advertised
+- [p2p/conn] pong timeout
+- [lite] comment out IAVL related code
+
+FEATURES:
+- [p2p] added new `/dial_peers&persistent=_` **unsafe** endpoint
+- [p2p] persistent node key in `$THMHOME/config/node_key.json`
+- [p2p] introduce peer ID and authenticate peers by ID using addresses like `ID@IP:PORT`
+- [p2p/pex] new seed mode crawls the network and serves as a seed.
+- [config] MempoolConfig.CacheSize
+- [config] P2P.SeedMode (`--p2p.seed_mode`)
+
+IMPROVEMENT:
+- [p2p/pex] stricter rules in the PEX reactor for better handling of abuse
+- [p2p] various improvements to code structure including subpackages for `pex` and `conn`
+- [docs] new spec!
+- [all] speed up the tests!
+
+BUG FIX:
+- [blockchain] StopPeerForError on timeout
+- [consensus] StopPeerForError on a bad Maj23 message
+- [state] flush mempool conn before calling commit
+- [types] fix priv val signing things that only differ by timestamp
+- [mempool] fix memory leak causing zombie peers
+- [p2p/conn] fix potential deadlock
+
+## 0.15.0 (December 29, 2017)
+
+BREAKING CHANGES:
+- [p2p] enable the Peer Exchange reactor by default
+- [types] add Timestamp field to Proposal/Vote
+- [types] add new fields to Header: TotalTxs, ConsensusParamsHash, LastResultsHash, EvidenceHash
+- [types] add Evidence to Block
+- [types] simplify ValidateBasic
+- [state] updates to support changes to the header
+- [state] Enforce <1/3 of validator set can change at a time
+
+FEATURES:
+- [state] Send indices of absent validators and addresses of byzantine validators in BeginBlock
+- [state] Historical ConsensusParams and ABCIResponses
+- [docs] Specification for the base Tendermint data structures.
+- [evidence] New evidence reactor for gossiping and managing evidence
+- [rpc] `/block_results?height=X` returns the DeliverTx results for a given height.
+
+IMPROVEMENTS:
+- [consensus] Better handling of corrupt WAL file
+
+BUG FIXES:
+- [lite] fix race
+- [state] validate block.Header.ValidatorsHash
+- [p2p] allow seed addresses to be prefixed with eg. `tcp://`
+- [p2p] use consistent key to refer to peers so we dont try to connect to existing peers
+- [cmd] fix `tendermint init` to ignore files that are there and generate files that aren't.
+
+## 0.14.0 (December 11, 2017)
+
+BREAKING CHANGES:
+- consensus/wal: removed separator
+- rpc/client: changed Subscribe/Unsubscribe/UnsubscribeAll funcs signatures to be identical to event bus.
+
+FEATURES:
+- new `tendermint lite` command (and `lite/proxy` pkg) for running a light-client RPC proxy.
+    NOTE it is currently insecure and its APIs are not yet covered by semver
+
+IMPROVEMENTS:
+- rpc/client: can act as event bus subscriber (See https://github.com/tendermint/tendermint/issues/945).
+- p2p: use exponential backoff from seconds to hours when attempting to reconnect to persistent peer
+- config: moniker defaults to the machine's hostname instead of "anonymous"
+
+BUG FIXES:
+- p2p: no longer exit if one of the seed addresses is incorrect
+
+## 0.13.0 (December 6, 2017)
+
+BREAKING CHANGES:
+- abci: update to v0.8 using gogo/protobuf; includes tx tags, vote info in RequestBeginBlock, data.Bytes everywhere, use int64, etc.
+- types: block heights are now `int64` everywhere
+- types & node: EventSwitch and EventCache have been replaced by EventBus and EventBuffer; event types have been overhauled
+- node: EventSwitch methods now refer to EventBus
+- rpc/lib/types: RPCResponse is no longer a pointer; WSRPCConnection interface has been modified
+- rpc/client: WaitForOneEvent takes an EventsClient instead of types.EventSwitch
+- rpc/client: Add/RemoveListenerForEvent are now Subscribe/Unsubscribe
+- rpc/core/types: ResultABCIQuery wraps an abci.ResponseQuery
+- rpc: `/subscribe` and `/unsubscribe` take `query` arg instead of `event`
+- rpc: `/status` returns the LatestBlockTime in human readable form instead of in nanoseconds
+- mempool: cached transactions return an error instead of an ABCI response with BadNonce
+
+FEATURES:
+- rpc: new `/unsubscribe_all` WebSocket RPC endpoint
+- rpc: new `/tx_search` endpoint for filtering transactions by more complex queries
+- p2p/trust: new trust metric for tracking peers. See ADR-006
+- config: TxIndexConfig allows to set what DeliverTx tags to index
+
+IMPROVEMENTS:
+- New asynchronous events system using `tmlibs/pubsub`
+- logging: Various small improvements
+- consensus: Graceful shutdown when app crashes
+- tests: Fix various non-deterministic errors
+- p2p: more defensive programming
+
+BUG FIXES:
+- consensus: fix panic where prs.ProposalBlockParts is not initialized
+- p2p: fix panic on bad channel
+
+## 0.12.1 (November 27, 2017)
+
+BUG FIXES:
+- upgrade tmlibs dependency to enable Windows builds for Tendermint
 
 ## 0.12.0 (October 27, 2017)
 

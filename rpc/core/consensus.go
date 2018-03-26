@@ -3,7 +3,9 @@ package core
 import (
 	cm "github.com/tendermint/tendermint/consensus"
 	cstypes "github.com/tendermint/tendermint/consensus/types"
+	p2p "github.com/tendermint/tendermint/p2p"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
+	sm "github.com/tendermint/tendermint/state"
 	"github.com/tendermint/tendermint/types"
 )
 
@@ -42,15 +44,14 @@ import (
 // 	"jsonrpc": "2.0"
 // }
 // ```
-func Validators(heightPtr *int) (*ctypes.ResultValidators, error) {
-	if heightPtr == nil {
-		blockHeight, validators := consensusState.GetValidators()
-		return &ctypes.ResultValidators{blockHeight, validators}, nil
+func Validators(heightPtr *int64) (*ctypes.ResultValidators, error) {
+	storeHeight := blockStore.Height()
+	height, err := getHeight(storeHeight, heightPtr)
+	if err != nil {
+		return nil, err
 	}
 
-	height := *heightPtr
-	state := consensusState.GetState()
-	validators, err := state.LoadValidators(height)
+	validators, err := sm.LoadValidators(stateDB, height)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +83,11 @@ func Validators(heightPtr *int) (*ctypes.ResultValidators, error) {
 // }
 // ```
 func DumpConsensusState() (*ctypes.ResultDumpConsensusState, error) {
-	peerRoundStates := make(map[string]*cstypes.PeerRoundState)
+	peerRoundStates := make(map[p2p.ID]*cstypes.PeerRoundState)
 	for _, peer := range p2pSwitch.Peers().List() {
 		peerState := peer.Get(types.PeerStateKey).(*cm.PeerState)
 		peerRoundState := peerState.GetRoundState()
-		peerRoundStates[peer.Key()] = peerRoundState
+		peerRoundStates[peer.ID()] = peerRoundState
 	}
 	return &ctypes.ResultDumpConsensusState{consensusState.GetRoundState(), peerRoundStates}, nil
 }

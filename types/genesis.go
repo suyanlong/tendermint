@@ -8,7 +8,6 @@ import (
 	"github.com/pkg/errors"
 
 	crypto "github.com/tendermint/go-crypto"
-	"github.com/tendermint/go-wire/data"
 	cmn "github.com/tendermint/tmlibs/common"
 )
 
@@ -28,8 +27,8 @@ type GenesisDoc struct {
 	ChainID         string             `json:"chain_id"`
 	ConsensusParams *ConsensusParams   `json:"consensus_params,omitempty"`
 	Validators      []GenesisValidator `json:"validators"`
-	AppHash         data.Bytes         `json:"app_hash"`
-	AppOptions      interface{}        `json:"app_options,omitempty"`
+	AppHash         cmn.HexBytes       `json:"app_hash"`
+	AppState        json.RawMessage    `json:"app_state,omitempty"`
 }
 
 // SaveAs is a utility method for saving GenensisDoc as a JSON file.

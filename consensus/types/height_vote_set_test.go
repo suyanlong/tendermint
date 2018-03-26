@@ -2,6 +2,7 @@ package types
 
 import (
 	"testing"
+	"time"
 
 	cfg "github.com/tendermint/tendermint/config"
 	"github.com/tendermint/tendermint/types"
@@ -17,7 +18,7 @@ func init() {
 func TestPeerCatchupRounds(t *testing.T) {
 	valSet, privVals := types.RandValidatorSet(10, 1)
 
-	hvs := NewHeightVoteSet(config.ChainID, 1, valSet)
+	hvs := NewHeightVoteSet(config.ChainID(), 1, valSet)
 
 	vote999_0 := makeVoteHR(t, 1, 999, privVals, 0)
 	added, err := hvs.AddVote(vote999_0, "peer1")
@@ -33,8 +34,8 @@ func TestPeerCatchupRounds(t *testing.T) {
 
 	vote1001_0 := makeVoteHR(t, 1, 1001, privVals, 0)
 	added, err = hvs.AddVote(vote1001_0, "peer1")
-	if err != nil {
-		t.Error("AddVote error", err)
+	if err != GotVoteFromUnwantedRoundError {
+		t.Errorf("Expected GotVoteFromUnwantedRoundError, but got %v", err)
 	}
 	if added {
 		t.Error("Expected to *not* add vote from peer, too many catchup rounds.")
@@ -47,17 +48,18 @@ func TestPeerCatchupRounds(t *testing.T) {
 
 }
 
-func makeVoteHR(t *testing.T, height, round int, privVals []*types.PrivValidatorFS, valIndex int) *types.Vote {
+func makeVoteHR(t *testing.T, height int64, round int, privVals []*types.PrivValidatorFS, valIndex int) *types.Vote {
 	privVal := privVals[valIndex]
 	vote := &types.Vote{
 		ValidatorAddress: privVal.GetAddress(),
 		ValidatorIndex:   valIndex,
 		Height:           height,
 		Round:            round,
+		Timestamp:        time.Now().UTC(),
 		Type:             types.VoteTypePrecommit,
 		BlockID:          types.BlockID{[]byte("fakehash"), types.PartSetHeader{}},
 	}
-	chainID := config.ChainID
+	chainID := config.ChainID()
 	err := privVal.SignVote(chainID, vote)
 	if err != nil {
 		panic(cmn.Fmt("Error signing vote: %v", err))

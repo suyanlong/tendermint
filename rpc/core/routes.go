@@ -7,17 +7,21 @@ import (
 // TODO: better system than "unsafe" prefix
 var Routes = map[string]*rpc.RPCFunc{
 	// subscribe/unsubscribe are reserved for websocket events.
-	"subscribe":   rpc.NewWSRPCFunc(Subscribe, "event"),
-	"unsubscribe": rpc.NewWSRPCFunc(Unsubscribe, "event"),
+	"subscribe":       rpc.NewWSRPCFunc(Subscribe, "query"),
+	"unsubscribe":     rpc.NewWSRPCFunc(Unsubscribe, "query"),
+	"unsubscribe_all": rpc.NewWSRPCFunc(UnsubscribeAll, ""),
 
 	// info API
+	"health":               rpc.NewRPCFunc(Health, ""),
 	"status":               rpc.NewRPCFunc(Status, ""),
 	"net_info":             rpc.NewRPCFunc(NetInfo, ""),
 	"blockchain":           rpc.NewRPCFunc(BlockchainInfo, "minHeight,maxHeight"),
 	"genesis":              rpc.NewRPCFunc(Genesis, ""),
 	"block":                rpc.NewRPCFunc(Block, "height"),
+	"block_results":        rpc.NewRPCFunc(BlockResults, "height"),
 	"commit":               rpc.NewRPCFunc(Commit, "height"),
 	"tx":                   rpc.NewRPCFunc(Tx, "hash,prove"),
+	"tx_search":            rpc.NewRPCFunc(TxSearch, "query,prove"),
 	"validators":           rpc.NewRPCFunc(Validators, "height"),
 	"dump_consensus_state": rpc.NewRPCFunc(DumpConsensusState, ""),
 	"unconfirmed_txs":      rpc.NewRPCFunc(UnconfirmedTxs, ""),
@@ -36,6 +40,7 @@ var Routes = map[string]*rpc.RPCFunc{
 func AddUnsafeRoutes() {
 	// control API
 	Routes["dial_seeds"] = rpc.NewRPCFunc(UnsafeDialSeeds, "seeds")
+	Routes["dial_peers"] = rpc.NewRPCFunc(UnsafeDialPeers, "peers,persistent")
 	Routes["unsafe_flush_mempool"] = rpc.NewRPCFunc(UnsafeFlushMempool, "")
 
 	// profiler API

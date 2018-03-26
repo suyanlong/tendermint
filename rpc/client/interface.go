@@ -20,9 +20,9 @@ implementation.
 package client
 
 import (
-	data "github.com/tendermint/go-wire/data"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	"github.com/tendermint/tendermint/types"
+	cmn "github.com/tendermint/tmlibs/common"
 )
 
 // ABCIClient groups together the functionality that principally
@@ -31,8 +31,9 @@ import (
 type ABCIClient interface {
 	// reading from abci app
 	ABCIInfo() (*ctypes.ResultABCIInfo, error)
-	ABCIQuery(path string, data data.Bytes) (*ctypes.ResultABCIQuery, error)
-	ABCIQueryWithOptions(path string, data data.Bytes, opts ABCIQueryOptions) (*ctypes.ResultABCIQuery, error)
+	ABCIQuery(path string, data cmn.HexBytes) (*ctypes.ResultABCIQuery, error)
+	ABCIQueryWithOptions(path string, data cmn.HexBytes,
+		opts ABCIQueryOptions) (*ctypes.ResultABCIQuery, error)
 
 	// writing to abci app
 	BroadcastTxCommit(tx types.Tx) (*ctypes.ResultBroadcastTxCommit, error)
@@ -43,16 +44,18 @@ type ABCIClient interface {
 // SignClient groups together the interfaces need to get valid
 // signatures and prove anything about the chain
 type SignClient interface {
-	Block(height *int) (*ctypes.ResultBlock, error)
-	Commit(height *int) (*ctypes.ResultCommit, error)
-	Validators(height *int) (*ctypes.ResultValidators, error)
+	Block(height *int64) (*ctypes.ResultBlock, error)
+	BlockResults(height *int64) (*ctypes.ResultBlockResults, error)
+	Commit(height *int64) (*ctypes.ResultCommit, error)
+	Validators(height *int64) (*ctypes.ResultValidators, error)
 	Tx(hash []byte, prove bool) (*ctypes.ResultTx, error)
+	TxSearch(query string, prove bool) ([]*ctypes.ResultTx, error)
 }
 
 // HistoryClient shows us data from genesis to now in large chunks.
 type HistoryClient interface {
 	Genesis() (*ctypes.ResultGenesis, error)
-	BlockchainInfo(minHeight, maxHeight int) (*ctypes.ResultBlockchainInfo, error)
+	BlockchainInfo(minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error)
 }
 
 type StatusClient interface {
@@ -64,14 +67,12 @@ type StatusClient interface {
 // if you want to listen for events, test if it also
 // implements events.EventSwitch
 type Client interface {
+	cmn.Service
 	ABCIClient
 	SignClient
 	HistoryClient
 	StatusClient
-
-	// this Client is reactive, you can subscribe to any TMEventData
-	// type, given the proper string. see tendermint/types/events.go
-	types.EventSwitch
+	EventsClient
 }
 
 // NetworkClient is general info about the network state.  May not
@@ -82,4 +83,11 @@ type Client interface {
 type NetworkClient interface {
 	NetInfo() (*ctypes.ResultNetInfo, error)
 	DumpConsensusState() (*ctypes.ResultDumpConsensusState, error)
+	Health() (*ctypes.ResultHealth, error)
+}
+
+// EventsClient is reactive, you can subscribe to any message, given the proper
+// string. see tendermint/types/events.go
+type EventsClient interface {
+	types.EventBusSubscriber
 }

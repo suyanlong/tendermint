@@ -8,9 +8,9 @@ Please make sure to use `gofmt` before every commit - the easiest way to do this
 
 ## Forking
 
-Please note that Go requires code to live under absolute paths, which complicates forking. 
-While my fork lives at `https://github.com/ebuchman/tendermint`, 
-the code should never exist at  `$GOPATH/src/github.com/ebuchman/tendermint`. 
+Please note that Go requires code to live under absolute paths, which complicates forking.
+While my fork lives at `https://github.com/ebuchman/tendermint`,
+the code should never exist at  `$GOPATH/src/github.com/ebuchman/tendermint`.
 Instead, we use `git remote` to add the fork as a new remote for the original repo,
 `$GOPATH/src/github.com/tendermint/tendermint `, and do all the work there.
 
@@ -34,16 +34,44 @@ Please don't make Pull Requests to `master`.
 
 ## Dependencies
 
-We use [glide](https://github.com/masterminds/glide) to manage dependencies.
-That said, the master branch of every Tendermint repository should just build with `go get`, which means they should be kept up-to-date with their dependencies so we can get away with telling people they can just `go get` our software.
-Since some dependencies are not under our control, a third party may break our build, in which case we can fall back on `glide install`. Even for dependencies under our control, glide helps us keeps multiple repos in sync as they evolve. Anything with an executable, such as apps, tools, and the core, should use glide.
+We use [dep](https://github.com/golang/dep) to manage dependencies.
 
-Run `bash scripts/glide/status.sh` to get a list of vendored dependencies that may not be up-to-date. 
+That said, the master branch of every Tendermint repository should just build
+with `go get`, which means they should be kept up-to-date with their
+dependencies so we can get away with telling people they can just `go get` our
+software.
+
+Since some dependencies are not under our control, a third party may break our
+build, in which case we can fall back on `dep ensure` (or `make
+get_vendor_deps`). Even for dependencies under our control, dep helps us to
+keep multiple repos in sync as they evolve. Anything with an executable, such
+as apps, tools, and the core, should use dep.
+
+Run `dep status` to get a list of vendored dependencies that may not be
+up-to-date.
+
+## Vagrant
+
+If you are a [Vagrant](https://www.vagrantup.com/) user, you can get started
+hacking Tendermint with the commands below.
+
+NOTE: In case you installed Vagrant in 2017, you might need to run
+`vagrant box update` to upgrade to the latest `ubuntu/xenial64`.
+
+```
+vagrant up
+vagrant ssh
+make test
+```
 
 ## Testing
 
-All repos should be hooked up to circle. 
-If they have `.go` files in the root directory, they will be automatically tested by circle using `go test -v -race ./...`. If not, they will need a `circle.yml`. Ideally, every repo has a `Makefile` that defines `make test` and includes its continuous integration status using a badge in the `README.md`.
+All repos should be hooked up to [CircleCI](https://circleci.com/).
+
+If they have `.go` files in the root directory, they will be automatically
+tested by circle using `go test -v -race ./...`. If not, they will need a
+`circle.yml`. Ideally, every repo has a `Makefile` that defines `make test` and
+includes its continuous integration status using a badge in the `README.md`.
 
 ## Branching Model and Release
 
@@ -75,3 +103,15 @@ especially `go-p2p` and `go-rpc`, as their versions are referenced in tendermint
 - push to release-vX.X.X to run the extended integration tests on the CI
 - merge to master
 - merge master back to develop
+
+### Hotfix Procedure:
+- start on `master`
+- checkout a new branch named hotfix-vX.X.X
+- make the required changes
+  - these changes should be small and an absolute necessity
+  - add a note to CHANGELOG.md
+- bumb versions
+- push to hotfix-vX.X.X to run the extended integration tests on the CI
+- merge hotfix-vX.X.X to master
+- merge hotfix-vX.X.X to develop
+- delete the hotfix-vX.X.X branch

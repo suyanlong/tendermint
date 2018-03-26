@@ -5,38 +5,45 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tendermint/tendermint/types"
 	cmn "github.com/tendermint/tmlibs/common"
 	"github.com/tendermint/tmlibs/log"
+
+	"github.com/tendermint/tendermint/p2p"
+	"github.com/tendermint/tendermint/types"
 )
 
 func init() {
-	peerTimeoutSeconds = time.Duration(2)
+	peerTimeout = 2 * time.Second
 }
 
 type testPeer struct {
-	id     string
-	height int
+	id     p2p.ID
+	height int64
 }
 
-func makePeers(numPeers int, minHeight, maxHeight int) map[string]testPeer {
-	peers := make(map[string]testPeer, numPeers)
+func makePeers(numPeers int, minHeight, maxHeight int64) map[p2p.ID]testPeer {
+	peers := make(map[p2p.ID]testPeer, numPeers)
 	for i := 0; i < numPeers; i++ {
-		peerID := cmn.RandStr(12)
-		height := minHeight + rand.Intn(maxHeight-minHeight)
+		peerID := p2p.ID(cmn.RandStr(12))
+		height := minHeight + rand.Int63n(maxHeight-minHeight)
 		peers[peerID] = testPeer{peerID, height}
 	}
 	return peers
 }
 
 func TestBasic(t *testing.T) {
-	start := 42
+	start := int64(42)
 	peers := makePeers(10, start+1, 1000)
-	timeoutsCh := make(chan string, 100)
-	requestsCh := make(chan BlockRequest, 100)
-	pool := NewBlockPool(start, requestsCh, timeoutsCh)
+	errorsCh := make(chan peerError, 1000)
+	requestsCh := make(chan BlockRequest, 1000)
+	pool := NewBlockPool(start, requestsCh, errorsCh)
 	pool.SetLogger(log.TestingLogger())
-	pool.Start()
+
+	err := pool.Start()
+	if err != nil {
+		t.Error(err)
+	}
+
 	defer pool.Stop()
 
 	// Introduce each peer.
@@ -64,8 +71,8 @@ func TestBasic(t *testing.T) {
 	// Pull from channels
 	for {
 		select {
-		case peerID := <-timeoutsCh:
-			t.Errorf("timeout: %v", peerID)
+		case err := <-errorsCh:
+			t.Error(err)
 		case request := <-requestsCh:
 			t.Logf("Pulled new BlockRequest %v", request)
 			if request.Height == 300 {
@@ -82,13 +89,16 @@ func TestBasic(t *testing.T) {
 }
 
 func TestTimeout(t *testing.T) {
-	start := 42
+	start := int64(42)
 	peers := makePeers(10, start+1, 1000)
-	timeoutsCh := make(chan string, 100)
-	requestsCh := make(chan BlockRequest, 100)
-	pool := NewBlockPool(start, requestsCh, timeoutsCh)
+	errorsCh := make(chan peerError, 1000)
+	requestsCh := make(chan BlockRequest, 1000)
+	pool := NewBlockPool(start, requestsCh, errorsCh)
 	pool.SetLogger(log.TestingLogger())
-	pool.Start()
+	err := pool.Start()
+	if err != nil {
+		t.Error(err)
+	}
 	defer pool.Stop()
 
 	for _, peer := range peers {
@@ -119,12 +129,13 @@ func TestTimeout(t *testing.T) {
 
 	// Pull from channels
 	counter := 0
-	timedOut := map[string]struct{}{}
+	timedOut := map[p2p.ID]struct{}{}
 	for {
 		select {
-		case peerID := <-timeoutsCh:
-			t.Logf("Peer %v timeouted", peerID)
-			if _, ok := timedOut[peerID]; !ok {
+		case err := <-errorsCh:
+			t.Log(err)
+			// consider error to be always timeout here
+			if _, ok := timedOut[err.peerID]; !ok {
 				counter++
 				if counter == len(peers) {
 					return // Done!

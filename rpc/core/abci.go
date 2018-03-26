@@ -2,9 +2,9 @@ package core
 
 import (
 	abci "github.com/tendermint/abci/types"
-	data "github.com/tendermint/go-wire/data"
 	ctypes "github.com/tendermint/tendermint/rpc/core/types"
 	"github.com/tendermint/tendermint/version"
+	cmn "github.com/tendermint/tmlibs/common"
 )
 
 // Query the application for some information.
@@ -45,9 +45,9 @@ import (
 // |-----------+--------+---------+----------+------------------------------------------------|
 // | path      | string | false   | false    | Path to the data ("/a/b/c")                    |
 // | data      | []byte | false   | true     | Data                                           |
-// | height    | uint64 | 0       | false    | Height (0 means latest)                        |
+// | height    | int64 | 0       | false    | Height (0 means latest)                        |
 // | trusted   | bool   | false   | false    | Does not include a proof of the data inclusion |
-func ABCIQuery(path string, data data.Bytes, height uint64, trusted bool) (*ctypes.ResultABCIQuery, error) {
+func ABCIQuery(path string, data cmn.HexBytes, height int64, trusted bool) (*ctypes.ResultABCIQuery, error) {
 	resQuery, err := proxyAppQuery.QuerySync(abci.RequestQuery{
 		Path:   path,
 		Data:   data,
@@ -58,9 +58,7 @@ func ABCIQuery(path string, data data.Bytes, height uint64, trusted bool) (*ctyp
 		return nil, err
 	}
 	logger.Info("ABCIQuery", "path", path, "data", data, "result", resQuery)
-	return &ctypes.ResultABCIQuery{
-		resQuery.Result(),
-	}, nil
+	return &ctypes.ResultABCIQuery{*resQuery}, nil
 }
 
 // Get some info about the application.
@@ -93,5 +91,5 @@ func ABCIInfo() (*ctypes.ResultABCIInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ctypes.ResultABCIInfo{resInfo}, nil
+	return &ctypes.ResultABCIInfo{*resInfo}, nil
 }

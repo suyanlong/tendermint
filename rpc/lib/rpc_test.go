@@ -17,11 +17,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tendermint/go-wire/data"
+	cmn "github.com/tendermint/tmlibs/common"
+	"github.com/tendermint/tmlibs/log"
+
 	client "github.com/tendermint/tendermint/rpc/lib/client"
 	server "github.com/tendermint/tendermint/rpc/lib/server"
 	types "github.com/tendermint/tendermint/rpc/lib/types"
-	"github.com/tendermint/tmlibs/log"
 )
 
 // Client and Server should work over tcp or unix sockets
@@ -47,7 +48,7 @@ type ResultEchoBytes struct {
 }
 
 type ResultEchoDataBytes struct {
-	Value data.Bytes `json:"value"`
+	Value cmn.HexBytes `json:"value"`
 }
 
 // Define some routes
@@ -75,7 +76,7 @@ func EchoBytesResult(v []byte) (*ResultEchoBytes, error) {
 	return &ResultEchoBytes{v}, nil
 }
 
-func EchoDataBytesResult(v data.Bytes) (*ResultEchoDataBytes, error) {
+func EchoDataBytesResult(v cmn.HexBytes) (*ResultEchoDataBytes, error) {
 	return &ResultEchoDataBytes{v}, nil
 }
 
@@ -114,7 +115,7 @@ func setup() {
 	tcpLogger := logger.With("socket", "tcp")
 	mux := http.NewServeMux()
 	server.RegisterRPCFuncs(mux, Routes, tcpLogger)
-	wm := server.NewWebsocketManager(Routes, nil, server.ReadWait(5*time.Second), server.PingPeriod(1*time.Second))
+	wm := server.NewWebsocketManager(Routes, server.ReadWait(5*time.Second), server.PingPeriod(1*time.Second))
 	wm.SetLogger(tcpLogger)
 	mux.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
 	go func() {
@@ -127,7 +128,7 @@ func setup() {
 	unixLogger := logger.With("socket", "unix")
 	mux2 := http.NewServeMux()
 	server.RegisterRPCFuncs(mux2, Routes, unixLogger)
-	wm = server.NewWebsocketManager(Routes, nil)
+	wm = server.NewWebsocketManager(Routes)
 	wm.SetLogger(unixLogger)
 	mux2.HandleFunc(websocketEndpoint, wm.WebsocketHandler)
 	go func() {
@@ -174,7 +175,7 @@ func echoBytesViaHTTP(cl client.HTTPClient, bytes []byte) ([]byte, error) {
 	return result.Value, nil
 }
 
-func echoDataBytesViaHTTP(cl client.HTTPClient, bytes data.Bytes) (data.Bytes, error) {
+func echoDataBytesViaHTTP(cl client.HTTPClient, bytes cmn.HexBytes) (cmn.HexBytes, error) {
 	params := map[string]interface{}{
 		"arg": bytes,
 	}
@@ -196,7 +197,7 @@ func testWithHTTPClient(t *testing.T, cl client.HTTPClient) {
 	require.Nil(t, err)
 	assert.Equal(t, got2, val2)
 
-	val3 := data.Bytes(randBytes(t))
+	val3 := cmn.HexBytes(randBytes(t))
 	got3, err := echoDataBytesViaHTTP(cl, val3)
 	require.Nil(t, err)
 	assert.Equal(t, got3, val3)
@@ -216,19 +217,17 @@ func echoViaWS(cl *client.WSClient, val string) (string, error) {
 		return "", err
 	}
 
-	select {
-	case msg := <-cl.ResponsesCh:
-		if msg.Error != nil {
-			return "", err
+	msg := <-cl.ResponsesCh
+	if msg.Error != nil {
+		return "", err
 
-		}
-		result := new(ResultEcho)
-		err = json.Unmarshal(*msg.Result, result)
-		if err != nil {
-			return "", nil
-		}
-		return result.Value, nil
 	}
+	result := new(ResultEcho)
+	err = json.Unmarshal(msg.Result, result)
+	if err != nil {
+		return "", nil
+	}
+	return result.Value, nil
 }
 
 func echoBytesViaWS(cl *client.WSClient, bytes []byte) ([]byte, error) {
@@ -240,19 +239,17 @@ func echoBytesViaWS(cl *client.WSClient, bytes []byte) ([]byte, error) {
 		return []byte{}, err
 	}
 
-	select {
-	case msg := <-cl.ResponsesCh:
-		if msg.Error != nil {
-			return []byte{}, msg.Error
+	msg := <-cl.ResponsesCh
+	if msg.Error != nil {
+		return []byte{}, msg.Error
 
-		}
-		result := new(ResultEchoBytes)
-		err = json.Unmarshal(*msg.Result, result)
-		if err != nil {
-			return []byte{}, nil
-		}
-		return result.Value, nil
 	}
+	result := new(ResultEchoBytes)
+	err = json.Unmarshal(msg.Result, result)
+	if err != nil {
+		return []byte{}, nil
+	}
+	return result.Value, nil
 }
 
 func testWithWSClient(t *testing.T, cl *client.WSClient) {
@@ -282,7 +279,7 @@ func TestServersAndClientsBasic(t *testing.T) {
 
 		cl3 := client.NewWSClient(addr, websocketEndpoint)
 		cl3.SetLogger(log.TestingLogger())
-		_, err := cl3.Start()
+		err := cl3.Start()
 		require.Nil(t, err)
 		fmt.Printf("=== testing server on %s using %v client", addr, cl3)
 		testWithWSClient(t, cl3)
@@ -311,7 +308,7 @@ func TestQuotedStringArg(t *testing.T) {
 func TestWSNewWSRPCFunc(t *testing.T) {
 	cl := client.NewWSClient(tcpAddr, websocketEndpoint)
 	cl.SetLogger(log.TestingLogger())
-	_, err := cl.Start()
+	err := cl.Start()
 	require.Nil(t, err)
 	defer cl.Stop()
 
@@ -322,23 +319,21 @@ func TestWSNewWSRPCFunc(t *testing.T) {
 	err = cl.Call(context.Background(), "echo_ws", params)
 	require.Nil(t, err)
 
-	select {
-	case msg := <-cl.ResponsesCh:
-		if msg.Error != nil {
-			t.Fatal(err)
-		}
-		result := new(ResultEcho)
-		err = json.Unmarshal(*msg.Result, result)
-		require.Nil(t, err)
-		got := result.Value
-		assert.Equal(t, got, val)
+	msg := <-cl.ResponsesCh
+	if msg.Error != nil {
+		t.Fatal(err)
 	}
+	result := new(ResultEcho)
+	err = json.Unmarshal(msg.Result, result)
+	require.Nil(t, err)
+	got := result.Value
+	assert.Equal(t, got, val)
 }
 
 func TestWSHandlesArrayParams(t *testing.T) {
 	cl := client.NewWSClient(tcpAddr, websocketEndpoint)
 	cl.SetLogger(log.TestingLogger())
-	_, err := cl.Start()
+	err := cl.Start()
 	require.Nil(t, err)
 	defer cl.Stop()
 
@@ -347,17 +342,15 @@ func TestWSHandlesArrayParams(t *testing.T) {
 	err = cl.CallWithArrayParams(context.Background(), "echo_ws", params)
 	require.Nil(t, err)
 
-	select {
-	case msg := <-cl.ResponsesCh:
-		if msg.Error != nil {
-			t.Fatalf("%+v", err)
-		}
-		result := new(ResultEcho)
-		err = json.Unmarshal(*msg.Result, result)
-		require.Nil(t, err)
-		got := result.Value
-		assert.Equal(t, got, val)
+	msg := <-cl.ResponsesCh
+	if msg.Error != nil {
+		t.Fatalf("%+v", err)
 	}
+	result := new(ResultEcho)
+	err = json.Unmarshal(msg.Result, result)
+	require.Nil(t, err)
+	got := result.Value
+	assert.Equal(t, got, val)
 }
 
 // TestWSClientPingPong checks that a client & server exchange pings
@@ -365,7 +358,7 @@ func TestWSHandlesArrayParams(t *testing.T) {
 func TestWSClientPingPong(t *testing.T) {
 	cl := client.NewWSClient(tcpAddr, websocketEndpoint)
 	cl.SetLogger(log.TestingLogger())
-	_, err := cl.Start()
+	err := cl.Start()
 	require.Nil(t, err)
 	defer cl.Stop()
 
